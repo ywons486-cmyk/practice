@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>게임 모음</title>
+<style>
+  /* 화면 색깔 설정 */
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #1e1e2e;
+    color: #eee;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  h1 { margin-bottom: 28px; }
+  /* 게임 카드들을 가로로 나란히 놓는다 (좁으면 자동으로 아래로 내려감) */
+  .cards { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
+  /* 게임 카드 하나 */
+  .card {
+    width: 220px;
+    padding: 24px;
+    background: #2a2a3d;
+    border: 2px solid #444;
+    border-radius: 12px;
+    text-align: center;
+    text-decoration: none;
+    color: #eee;
+  }
+  .card:hover { border-color: #ffd166; }
+  .card h2 { margin: 0 0 10px; }
+  .card p { margin: 0; color: #bbb; font-size: 14px; }
+</style>
+</head>
+<body>
+  <h1>게임 모음</h1>
+  <div class="cards">
+    <!-- 카드를 누르면 해당 게임 파일이 열린다 -->
+    <a class="card" href="tetris.html">
+      <h2>테트리스</h2>
+      <p>떨어지는 블록을 맞춰 줄을 지워요.</p>
+    </a>
+    <a class="card" href="snake.html">
+      <h2>뱀 게임</h2>
+      <p>뱀을 움직여 먹이를 먹고 길어져요.</p>
+    </a>
+  </div>
+</body>
+</html>
