@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>테트리스</title>
+<style>
+  /* 화면 색깔 설정 */
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #1e1e2e;
+    color: #eee;
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .wrap { display: flex; gap: 24px; align-items: flex-start; padding: 16px; }
+  canvas { background: #111; border: 2px solid #555; display: block; }
+  .panel { min-width: 170px; }
+  .panel div { margin: 8px 0; font-size: 18px; }
+  .panel h2 { margin: 0 0 10px; }
+  button { font-size: 16px; padding: 8px 14px; cursor: pointer; margin-top: 8px; }
+  #msg { color: #ffd166; min-height: 22px; }
+  .help { font-size: 14px; line-height: 1.7; color: #bbb; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- 블록이 떨어지는 게임 판 -->
+  <canvas id="board" width="300" height="600"></canvas>
+
+  <div class="panel">
+    <h2>테트리스</h2>
+    <div>점수: <span id="score">0</span></div>
+    <div>지운 줄: <span id="lines">0</span></div>
+    <div>레벨: <span id="level">1</span></div>
+    <div>다음 블록</div>
+    <!-- 다음에 나올 블록 미리보기 -->
+    <canvas id="next" width="120" height="120"></canvas>
+    <div id="msg"></div>
+    <button id="restart">다시 시작</button>
+    <p class="help">
+      ← → : 좌우 이동<br>
+      ↑ : 회전<br>
+      ↓ : 빠르게 내리기<br>
+      Space : 바로 떨어뜨리기<br>
+      P : 일시정지
+    </p>
+  </div>
+</div>
+
+<script>
+  // ===== 기본 설정 =====
+  const COLS = 10;      // 가로 칸 수
+  const ROWS = 20;      // 세로 칸 수
+  const CELL = 30;      // 칸 한 개의 크기 (픽셀)
+
+  // 화면 가져오기
+  const boardCanvas = document.getElementById('board');
+  const ctx = boardCanvas.getContext('2d');
+  const nextCanvas = document.getElementById('next');
+  const nctx = nextCanvas.getContext('2d');
+
+  // 블록 모양 목록 (1 = 블록이 있는 칸, 0 = 빈 칸)
+  const SHAPES = {
+    I: [[1, 1, 1, 1]],
+    O: [[1, 1], [1, 1]],
+    T: [[0, 1, 0], [1, 1, 1]],
+    S: [[0, 1, 1], [1, 1, 0]],
+    Z: [[1, 1, 0], [0, 1, 1]],
+    J: [[1, 0, 0], [1, 1, 1]],
+    L: [[0, 0, 1], [1, 1, 1]],
+  };
+
+  // 블록마다 정해진 색깔
+  const COLORS = {
+    I: '#00f0f0', O: '#f0f000', T: '#a000f0',
+    S: '#00f000', Z: '#f00000', J: '#0000f0', L: '#f0a000',
+  };
+
+  const TYPES = Object.keys(SHAPES);
+
+  // 게임 상태를 담는 변수들
+  let board;      // 쌓인 블록 상태 (빈 칸은 '', 블록이 있으면 색깔)
+  let cur;        // 지금 떨어지고 있는 블록
+  let nextType;   // 다음에 나올 블록 종류
+  let score, lines, level;
+  let timer;      // 자동으로 떨어뜨리는 타이머
+  let paused, over;
+
+  // ===== 도우미 함수 =====
+
+  // 빈 게임 판을 만든다 (ROWS 줄, 각 줄은 COLS 칸)
+  function makeEmptyBoard() {
+    const b = [];
+    for (let r = 0; r < ROWS; r++) {
+      b.push(new Array(COLS).fill(''));
+    }
+    return b;
+  }
+
+  // 아무 블록 종류나 하나 고른다
+  function randomType() {
+    return TYPES[Math.floor(Math.random() * TYPES.length)];
+  }
+
+  // 블록 하나를 만든다 (처음에는 가운데 위쪽에서 시작)
+  function makePiece(type) {
+    const shape = SHAPES[type].map(row => row.slice());
+    return {
+      type: type,
+      shape: shape,
+      x: Math.floor((COLS - shape[0].length) / 2),
+      y: 0,
+    };
+  }
+
+  // 이 모양이 (px, py) 위치에 들어갈 수 있는지 검사
+  // 벽 밖이거나 이미 쌓인 블록과 겹치면 false
+  function fits(shape, px, py) {
+    for (let r = 0; r < shape.length; r++) {
+      for (let c = 0; c < shape[r].length; c++) {
+        if (!shape[r][c]) continue;          // 빈 칸은 검사하지 않음
+        const nx = px + c;
+        const ny = py + r;
+        if (nx < 0 || nx >= COLS || ny >= ROWS) return false; // 벽이나 바닥
+        if (ny >= 0 && board[ny][nx]) return false;          // 이미 쌓인 블록
+      }
+    }
+    return true;
+  }
+
+  // 모양을 시계 방향으로 90도 돌린다
+  function rotate(shape) {
+    const h = shape.length;
+    const w = shape[0].length;
+    const result = [];
+    for (let c = 0; c < w; c++) {
+      const row = [];
+      for (let r = h - 1; r >= 0; r--) {
+        row.push(shape[r][c]);
+      }
+      result.push(row);
+    }
+    return result;
+  }
+
+  // ===== 블록 움직이기 =====
+
+  // 좌우로 한 칸 움직인다 (dx = -1 이면 왼쪽, 1 이면 오른쪽)
+  function movePiece(dx) {
+    if (fits(cur.shape, cur.x + dx, cur.y)) {
+      cur.x += dx;
+    }
+  }
+
+  // 블록을 회전한다
+  // 벽에 닿아서 회전이 안 되면 옆으로 살짝 밀어서 맞춰 본다
+  function rotatePiece() {
+    const rotated = rotate(cur.shape);
+    const kicks = [0, -1, 1, -2, 2];
+    for (const k of kicks) {
+      if (fits(rotated, cur.x + k, cur.y)) {
+        cur.shape = rotated;
+        cur.x += k;
+        return;
+      }
+    }
+  }
+
+  // 블록을 한 칸 아래로 내린다. 더 내려갈 수 없으면 판에 고정한다
+  function dropPiece() {
+    if (fits(cur.shape, cur.x, cur.y + 1)) {
+      cur.y += 1;
+    } else {
+      lockPiece();
+    }
+  }
+
+  // 스페이스 키: 바닥까지 한 번에 떨어뜨린다
+  function hardDrop() {
+    while (fits(cur.shape, cur.x, cur.y + 1)) {
+      cur.y += 1;
+    }
+    lockPiece();
+  }
+
+  // 블록을 판에 고정하고, 줄을 지우고, 다음 블록을 꺼낸다
+  function lockPiece() {
+    for (let r = 0; r < cur.shape.length; r++) {
+      for (let c = 0; c < cur.shape[r].length; c++) {
+        if (!cur.shape[r][c]) continue;
+        const ny = cur.y + r;
+        if (ny < 0) {            // 블록이 화면 위쪽에 걸렸다 = 게임 오버
+          gameOver();
+          return;
+        }
+        board[ny][cur.x + c] = COLORS[cur.type];
+      }
+    }
+    clearLines();
+    spawnPiece();
+  }
+
+  // 가득 찬 줄을 찾아서 지운다
+  function clearLines() {
+    let cleared = 0;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      // 이 줄의 모든 칸이 채워져 있는지 확인
+      if (board[r].every(cell => cell !== '')) {
+        board.splice(r, 1);                       // 이 줄을 빼고
+        board.unshift(new Array(COLS).fill(''));  // 맨 위에 빈 줄을 넣는다
+        cleared++;
+        r++;                                      // 같은 자리를 다시 검사
+      }
+    }
+
+    if (cleared > 0) {
+      // 한 번에 많이 지울수록 점수가 많다 (레벨도 곱한다)
+      const points = [0, 100, 300, 500, 800];
+      score += points[cleared] * level;
+      lines += cleared;
+      level = Math.floor(lines / 10) + 1;   // 10줄마다 레벨 상승
+      restartTimer();                        // 속도 갱신
+      updateInfo();
+    }
+  }
+
+  // 새 블록을 꺼내서 떨어뜨릴 준비를 한다
+  function spawnPiece() {
+    cur = makePiece(nextType);
+    nextType = randomType();
+    if (!fits(cur.shape, cur.x, cur.y)) {  // 나오자마자 자리가 없으면 끝
+      gameOver();
+      return;
+    }
+    drawNext();
+  }
+
+  // ===== 타이머 (자동으로 떨어뜨리기) =====
+
+  // 레벨이 높을수록 빨리 떨어진다 (최소 0.1초)
+  function speedMs() {
+    return Math.max(100, 800 - (level - 1) * 70);
+  }
+
+  // 타이머를 새로 맞춘다
+  function restartTimer() {
+    clearInterval(timer);
+    timer = setInterval(tick, speedMs());
+  }
+
+  // 타이머가 울릴 때마다 실행되는 함수
+  function tick() {
+    if (paused || over) return;
+    dropPiece();
+    draw();
+  }
+
+  // ===== 그리기 =====
+
+  // 칸 하나를 그린다 (테두리를 살짝 밝게 해서 입체처럼 보이게)
+  function drawCell(context, x, y, color) {
+    context.fillStyle = color;
+    context.fillRect(x * CELL + 1, y * CELL + 1, CELL - 2, CELL - 2);
+    context.fillStyle = 'rgba(255,255,255,0.25)';
+    context.fillRect(x * CELL + 1, y * CELL + 1, CELL - 2, 4);
+  }
+
+  // 화면 전체를 다시 그린다
+  function draw() {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, boardCanvas.width, boardCanvas.height);
+
+    // 쌓여 있는 블록
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (board[r][c]) drawCell(ctx, c, r, board[r][c]);
+      }
+    }
+
+    // 지금 떨어지는 블록
+    if (cur) {
+      for (let r = 0; r < cur.shape.length; r++) {
+        for (let c = 0; c < cur.shape[r].length; c++) {
+          if (cur.shape[r][c] && cur.y + r >= 0) {
+            drawCell(ctx, cur.x + c, cur.y + r, COLORS[cur.type]);
+          }
+        }
+      }
+    }
+
+    // 일시정지 / 게임 오버 안내 글씨
+    if (over || paused) {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(0, 0, boardCanvas.width, boardCanvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 28px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(over ? '게임 오버' : '일시정지', boardCanvas.width / 2, boardCanvas.height / 2);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // 다음 블록 미리보기를 그린다
+  function drawNext() {
+    nctx.fillStyle = '#111';
+    nctx.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+    const shape = SHAPES[nextType];
+    const size = 24;
+    // 가운데에 오도록 시작 위치를 계산
+    const offX = Math.floor((nextCanvas.width - shape[0].length * size) / 2);
+    const offY = Math.floor((nextCanvas.height - shape.length * size) / 2);
+    for (let r = 0; r < shape.length; r++) {
+      for (let c = 0; c < shape[r].length; c++) {
+        if (!shape[r][c]) continue;
+        nctx.fillStyle = COLORS[nextType];
+        nctx.fillRect(offX + c * size + 1, offY + r * size + 1, size - 2, size - 2);
+      }
+    }
+  }
+
+  // 점수판 숫자 갱신
+  function updateInfo() {
+    document.getElementById('score').textContent = score;
+    document.getElementById('lines').textContent = lines;
+    document.getElementById('level').textContent = level;
+  }
+
+  // 아래 메시지 칸에 글을 보여준다
+  function showMsg(text) {
+    document.getElementById('msg').textContent = text;
+  }
+
+  // ===== 게임 흐름 =====
+
+  // 게임을 처음부터 시작한다
+  function startGame() {
+    board = makeEmptyBoard();
+    score = 0;
+    lines = 0;
+    level = 1;
+    paused = false;
+    over = false;
+    nextType = randomType();
+    spawnPiece();
+    updateInfo();
+    showMsg('');
+    restartTimer();
+    draw();
+  }
+
+  // 게임 오버 처리
+  function gameOver() {
+    over = true;
+    clearInterval(timer);
+    showMsg('게임 오버! 다시 시작 버튼을 누르세요.');
+    draw();
+  }
+
+  // ===== 키보드 조작 =====
+  document.addEventListener('keydown', (e) => {
+    // 화살표 키와 스페이스 키로 화면이 스크롤되지 않게 막는다
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) {
+      e.preventDefault();
+    }
+    if (over) return;   // 게임이 끝났으면 조작을 무시
+
+    if (e.key === 'p' || e.key === 'P') {
+      paused = !paused;
+      showMsg(paused ? '일시정지 중 (P 를 누르면 계속)' : '');
+      draw();
+      return;
+    }
+    if (paused) return; // 일시정지 중에는 블록을 움직이지 않는다
+
+    switch (e.key) {
+      case 'ArrowLeft':  movePiece(-1); break;
+      case 'ArrowRight': movePiece(1);  break;
+      case 'ArrowUp':    rotatePiece(); break;
+      case 'ArrowDown':  dropPiece();   break;
+      case ' ':          hardDrop();    break;
+      default: return;
+    }
+    draw();
+  });
+
+  // 다시 시작 버튼
+  document.getElementById('restart').addEventListener('click', () => {
+    startGame();
+  });
+
+  // 페이지가 열리면 바로 시작
+  startGame();
+</script>
+</body>
+</html>
